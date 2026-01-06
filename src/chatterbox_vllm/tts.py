@@ -482,9 +482,17 @@ class ChatterboxTTS:
                     speech_tokens = drop_invalid_tokens(speech_tokens)
                     speech_tokens = speech_tokens[speech_tokens < 6561]
                     
+                    if len(speech_tokens) == 0:
+                        print(f"[S3] Warning: No valid speech tokens for prompt {i}, skipping")
+                        results.append(torch.zeros(1, 1))
+                        continue
+                    
                     # Remove last token to avoid click artifacts (like original Viterbox)
                     if len(speech_tokens) > 1:
                         speech_tokens = speech_tokens[:-1]
+                    
+                    if len(speech_tokens) < 10:
+                        print(f"[S3] Warning: Very short speech token sequence ({len(speech_tokens)} tokens) for prompt {i}")
 
                     wav, _ = self.s3gen.inference(
                         speech_tokens=speech_tokens,

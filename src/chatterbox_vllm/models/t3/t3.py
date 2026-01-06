@@ -379,7 +379,10 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
         if len(input_ids) == 0:
             return []
         
-        remaining_multimodal_embeddings = torch.cat(multimodal_embeddings, dim=0)
+        if not multimodal_embeddings:
+            remaining_multimodal_embeddings = torch.empty(0, self.dim)
+        else:
+            remaining_multimodal_embeddings = torch.cat(multimodal_embeddings, dim=0)
 
         # with open("/ram/input_ids.txt", "w") as f:
         #     f.write(str(input_ids.tolist()))
@@ -402,10 +405,17 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
             if (in_prefill_block != (input_id < SPEECH_TOKEN_OFFSET)) or (input_id == PREFILL_COND_START_TOKEN):
                 if buffer:
                     if in_prefill_block:
-                        # assert len(remaining_multimodal_embeddings) >= len(buffer), "Not enough remaining multimodal embeddings"
-                        mme, remaining_multimodal_embeddings = remaining_multimodal_embeddings\
-                            .split([len(buffer), len(remaining_multimodal_embeddings) - len(buffer)], dim=0)
-                        output.append((torch.tensor(buffer).to(input_ids.device), mme))
+                        available = len(remaining_multimodal_embeddings)
+                        needed = len(buffer)
+                        if available < needed:
+                            print(f"[T3] Warning: Not enough multimodal embeddings (have {available}, need {needed}), using available")
+                            needed = available
+                        if needed > 0:
+                            mme, remaining_multimodal_embeddings = remaining_multimodal_embeddings\
+                                .split([needed, available - needed], dim=0)
+                            output.append((torch.tensor(buffer[:needed]).to(input_ids.device), mme))
+                        else:
+                            output.append((torch.tensor(buffer).to(input_ids.device), None))
                     else:
                         output.append((torch.tensor(buffer).to(input_ids.device), None))
 
@@ -418,10 +428,17 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
         # Add any elements left in the buffer
         if buffer:
             if in_prefill_block:
-                # assert len(remaining_multimodal_embeddings) >= len(buffer), "Not enough remaining multimodal embeddings"
-                mme, remaining_multimodal_embeddings = remaining_multimodal_embeddings\
-                    .split([len(buffer), len(remaining_multimodal_embeddings) - len(buffer)], dim=0)
-                output.append((torch.tensor(buffer).to(input_ids.device), mme))
+                available = len(remaining_multimodal_embeddings)
+                needed = len(buffer)
+                if available < needed:
+                    print(f"[T3] Warning: Not enough multimodal embeddings at end (have {available}, need {needed})")
+                    needed = available
+                if needed > 0:
+                    mme, remaining_multimodal_embeddings = remaining_multimodal_embeddings\
+                        .split([needed, available - needed], dim=0)
+                    output.append((torch.tensor(buffer[:needed]).to(input_ids.device), mme))
+                else:
+                    output.append((torch.tensor(buffer).to(input_ids.device), None))
             else:
                 output.append((torch.tensor(buffer).to(input_ids.device), None))
 
