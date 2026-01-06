@@ -504,8 +504,8 @@ class T3(nn.Module):
         stride_length = stride_length if "stride" in generate_token_backend else 1
         for i in tqdm(range(max_new_tokens // stride_length), desc="Sampling", dynamic_ncols=True): 
             i_tensor = indices[i * stride_length]
-            # Check for EOS token.
-            if i * stride_length > length_guesstimate and i % (20 // stride_length) == 0:
+            # Check for EOS token every 4 iterations (more frequent than before)
+            if i % (4 // stride_length) == 0:
                 if (generated_ids == stop_token_tensor).any():
                     if benchmark_t3:
                         torch.cuda.synchronize() # For benchmarking to have correct it/s

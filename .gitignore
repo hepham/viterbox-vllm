@@ -46,3 +46,6 @@ checkpoints/
 
 # Ignore generated sample .wav files
 **/*.wav
+chatterbox-vllm/
+temp_viterbox/
+venv/

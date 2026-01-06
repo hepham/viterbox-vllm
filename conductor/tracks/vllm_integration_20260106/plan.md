@@ -3,8 +3,8 @@
 ## Phase 1: Stabilization
 Focus on fixing known issues and ensuring correctness.
 
-- [ ] Task: Audit vLLM internal API usage for compatibility with vLLM 0.10+
-- [ ] Task: Fix CFG implementation to allow per-request tuning (not just env var)
+- [x] Task: Audit vLLM internal API usage for compatibility with vLLM 0.10+ (commit 3ec486e)
+- [~] Task: Fix CFG implementation to allow per-request tuning (not just env var)
 - [ ] Task: Resolve batched request truncation edge cases
 - [ ] Task: Implement proper error handling with actionable messages
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Stabilization' (Protocol in workflow.md)

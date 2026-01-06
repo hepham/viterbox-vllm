@@ -1,8 +1,32 @@
 {
   "track_id": "vllm_integration_20260106",
   "type": "feature",
-  "status": "new",
+  "status": "in_progress",
   "created_at": "2026-01-06T00:00:00Z",
-  "updated_at": "2026-01-06T00:00:00Z",
-  "description": "vLLM Integration Enhancement"
+  "updated_at": "2026-01-06T10:02:00Z",
+  "description": "vLLM Integration Enhancement",
+  "beads_epic": "chatterbox-296",
+  "beads_tasks": {
+    "phase1_task1": "chatterbox-296.1",
+    "phase1_task2": "chatterbox-296.2",
+    "phase1_task3": "chatterbox-296.3",
+    "phase1_task4": "chatterbox-296.4",
+    "phase1_task5": "chatterbox-296.5",
+    "phase2_task1": "chatterbox-296.6",
+    "phase2_task2": "chatterbox-296.7",
+    "phase2_task3": "chatterbox-296.8",
+    "phase2_task4": "chatterbox-296.9",
+    "phase2_task5": "chatterbox-296.10",
+    "phase3_task1": "chatterbox-296.11",
+    "phase3_task2": "chatterbox-296.12",
+    "phase3_task3": "chatterbox-296.13",
+    "phase3_task4": "chatterbox-296.14",
+    "phase3_task5": "chatterbox-296.15",
+    "phase4_task1": "chatterbox-296.16",
+    "phase4_task2": "chatterbox-296.17",
+    "phase4_task3": "chatterbox-296.18",
+    "phase4_task4": "chatterbox-296.19",
+    "phase4_task5": "chatterbox-296.20",
+    "phase4_task6": "chatterbox-296.21"
+  }
 }
