@@ -40,6 +40,10 @@ PREFILL_COND_END_TOKEN = 696  # [PLACEHOLDER56]; Marks the last token of the con
 PREFILL_END_TOKEN = 697  # [PLACEHOLDER57]; Marks the end of the prefill block. This corresponds to the start of speech token.
 
 CONDITIONING_SIZE = 34 # 1 for speaker_emb, 0 for clap_emb, 32 for cond_prompt_speech_emb, 1 for emotion_adv
+CFG_SCALE_ENCODING_DIM = 0  # We encode CFG scale in the first dimension of the first conditioning token
+
+# Default CFG scale - can be overridden per-request by encoding in conditionals
+DEFAULT_CFG_SCALE = 0.5
 
 # HACK: We need to be able to distinguish between the prefill tokens and the decode tokens.
 # We'll do this by offsetting the speech tokens (only within vLLM) so they don't overlap with the
@@ -267,7 +271,7 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
         # Initialize LLaMA backbone
         self.tfmr = LlamaModel(vllm_config=vllm_config, prefix=prefix + ".tfmr")
 
-        text_tokens_dict_size = 704 if self.cfg.tokenizer == "EnTokenizer" else 2454
+        text_tokens_dict_size = 704 if self.cfg.tokenizer == "EnTokenizer" else (2549 if self.cfg.tokenizer == "ViterboxTokenizer" else 2454)
 
         # Initialize custom components
         self.t3conf = T3Config()
@@ -293,8 +297,11 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
         )
         self.logits_processor = LogitsProcessor(self.t3conf.speech_tokens_dict_size)
 
-        self.cfg_scale = float(os.environ.get("CHATTERBOX_CFG_SCALE", "0.5"))
-        print("Applying CFG scale:", self.cfg_scale)
+        self.default_cfg_scale = float(os.environ.get("CHATTERBOX_CFG_SCALE", str(DEFAULT_CFG_SCALE)))
+        print("Default CFG scale:", self.default_cfg_scale)
+        
+        self._request_cfg_scales: dict[int, float] = {}
+        self._pending_cfg_scale: float = self.default_cfg_scale
 
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
@@ -334,7 +341,14 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
 
     def get_multimodal_embeddings(self, **kwargs: object) -> Optional[MultiModalEmbeddings]:
         conditionals: Optional[list[list[T3Cond]]] = kwargs.get("conditionals", [])
-        return [batch[0] for batch in conditionals]
+        embeddings = []
+        for batch in conditionals:
+            emb = batch[0]
+            cfg_scale = emb[0, CFG_SCALE_ENCODING_DIM].item() if emb.shape[0] > 0 else self.default_cfg_scale
+            if cfg_scale > 0:
+                self._pending_cfg_scale = cfg_scale
+            embeddings.append(emb)
+        return embeddings
 
 
     def split_prefill_decode(
@@ -598,7 +612,8 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
         cond_logits = self.logits_processor(self.speech_head, cond_hidden_states, sampling_metadata)
         uncond_logits = self.logits_processor(self.speech_head, uncond_hidden_states, sampling_metadata)
 
-        logits = cond_logits + self.cfg_scale * (cond_logits - uncond_logits)
+        cfg_scale = self._pending_cfg_scale
+        logits = cond_logits + cfg_scale * (cond_logits - uncond_logits)
 
         # print("t3/compute_logits/logit with the highest probability (cond, uncond, post-cfg):", cond_logits.argmax(), uncond_logits.argmax(), logits.argmax())
 

@@ -17,12 +17,41 @@ from chatterbox_vllm.models.t3.modules.t3_config import T3Config
 from .models.s3tokenizer import S3_SR, drop_invalid_tokens
 from .models.s3gen import S3GEN_SR, S3Gen
 from .models.voice_encoder import VoiceEncoder
-from .models.t3 import SPEECH_TOKEN_OFFSET
+from .models.t3 import SPEECH_TOKEN_OFFSET, CFG_SCALE_ENCODING_DIM, DEFAULT_CFG_SCALE
 from .models.t3.modules.cond_enc import T3Cond, T3CondEnc
 from .models.t3.modules.learned_pos_emb import LearnedPositionEmbeddings
 from .text_utils import punc_norm, SUPPORTED_LANGUAGES
 
 REPO_ID = "ResembleAI/chatterbox"
+VITERBOX_REPO_ID = "dolly-vn/viterbox"
+
+# Viterbox supported languages (includes Vietnamese)
+VITERBOX_SUPPORTED_LANGUAGES = {
+    "vi": "Vietnamese",
+    "ar": "Arabic",
+    "da": "Danish",
+    "de": "German",
+    "el": "Greek",
+    "en": "English",
+    "es": "Spanish",
+    "fi": "Finnish",
+    "fr": "French",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "no": "Norwegian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "sv": "Swedish",
+    "sw": "Swahili",
+    "tr": "Turkish",
+    "zh": "Chinese",
+}
 
 @dataclass
 class Conditionals:
@@ -184,11 +213,99 @@ class ChatterboxTTS:
         model_safetensors_path.symlink_to(t3_cfg_path)
 
         return cls.from_local(Path(local_path).parent, variant="multilingual", *args, **kwargs)
+
+    @classmethod
+    def from_pretrained_viterbox(cls,
+                                  repo_id: str = VITERBOX_REPO_ID,
+                                  *args, **kwargs) -> 'ChatterboxTTS':
+        """Load Viterbox Vietnamese TTS model."""
+        # Download Viterbox model files
+        for fpath in ["ve.pt", "t3_ml24ls_v2.safetensors", "s3gen.pt", "tokenizer_vi_expanded.json", "conds.pt"]:
+            local_path = hf_hub_download(repo_id=repo_id, filename=fpath)
+
+        # Ensure the symlink in './t3-model-viterbox/model.safetensors' points to t3 weights
+        t3_path = Path(local_path).parent / "t3_ml24ls_v2.safetensors"
+        model_safetensors_path = Path.cwd() / "t3-model-viterbox" / "model.safetensors"
+        model_safetensors_path.unlink(missing_ok=True)
+        model_safetensors_path.symlink_to(t3_path)
+
+        return cls.from_local_viterbox(Path(local_path).parent, *args, **kwargs)
+
+    @classmethod
+    def from_local_viterbox(cls, ckpt_dir: str | Path, target_device: str = "cuda", 
+                            max_model_len: int = 1000, compile: bool = False,
+                            max_batch_size: int = 10,
+                            s3gen_use_fp16: bool = False,
+                            **kwargs) -> 'ChatterboxTTS':
+        """Load Viterbox model from local directory."""
+        ckpt_dir = Path(ckpt_dir)
+
+        # Viterbox uses expanded vocab size (2549)
+        t3_config = T3Config()
+        t3_config.text_tokens_dict_size = 2549
+
+        # Load T3 weights (Viterbox uses .safetensors format)
+        t3_weights = load_file(ckpt_dir / "t3_ml24ls_v2.safetensors")
+
+        t3_enc = T3CondEnc(t3_config)
+        t3_enc.load_state_dict({ k.replace('cond_enc.', ''):v for k,v in t3_weights.items() if k.startswith('cond_enc.') })
+        t3_enc = t3_enc.to(device=target_device).eval()
+
+        t3_speech_emb = torch.nn.Embedding(t3_config.speech_tokens_dict_size, t3_config.n_channels)
+        t3_speech_emb.load_state_dict({ k.replace('speech_emb.', ''):v for k,v in t3_weights.items() if k.startswith('speech_emb.') })
+        t3_speech_emb = t3_speech_emb.to(device=target_device).eval()
+
+        t3_speech_pos_emb = LearnedPositionEmbeddings(t3_config.max_speech_tokens + 2 + 2, t3_config.n_channels)
+        t3_speech_pos_emb.load_state_dict({ k.replace('speech_pos_emb.', ''):v for k,v in t3_weights.items() if k.startswith('speech_pos_emb.') })
+        t3_speech_pos_emb = t3_speech_pos_emb.to(device=target_device).eval()
+
+        total_gpu_memory = torch.cuda.get_device_properties(0).total_memory
+        unused_gpu_memory = total_gpu_memory - torch.cuda.memory_allocated()
+        
+        vllm_memory_needed = (1.55*1024*1024*1024) + (max_batch_size * max_model_len * 1024 * 128)
+        vllm_memory_percent = vllm_memory_needed / unused_gpu_memory
+
+        print(f"Giving vLLM {vllm_memory_percent * 100:.2f}% of GPU memory ({vllm_memory_needed / 1024**2:.2f} MB)")
+
+        base_vllm_kwargs = {
+            "model": "./t3-model-viterbox",
+            "task": "generate",
+            "tokenizer": "ViterboxTokenizer",
+            "tokenizer_mode": "custom",
+            "gpu_memory_utilization": vllm_memory_percent,
+            "enforce_eager": not compile,
+            "max_model_len": max_model_len,
+        }
+
+        t3 = LLM(**{**base_vllm_kwargs, **kwargs})
+
+        # Load Voice Encoder (Viterbox uses .pt format)
+        ve = VoiceEncoder()
+        ve.load_state_dict(torch.load(ckpt_dir / "ve.pt", weights_only=True, map_location=target_device))
+        ve = ve.to(device=target_device).eval()
+
+        # Load S3Gen (Viterbox uses .pt format)
+        s3gen = S3Gen(use_fp16=s3gen_use_fp16)
+        s3gen.load_state_dict(torch.load(ckpt_dir / "s3gen.pt", weights_only=True, map_location=target_device), strict=False)
+        s3gen = s3gen.to(device=target_device).eval()
+
+        # Load default conditioning
+        default_conds = Conditionals.load(ckpt_dir / "conds.pt")
+        default_conds.to(device=target_device)
+
+        return cls(
+            target_device=target_device, max_model_len=max_model_len,
+            t3=t3, t3_config=t3_config, t3_cond_enc=t3_enc, t3_speech_emb=t3_speech_emb, t3_speech_pos_emb=t3_speech_pos_emb,
+            s3gen=s3gen, ve=ve, default_conds=default_conds,
+            variant="viterbox",
+        )
     
     def get_supported_languages(self) -> dict[str, str]:
         """Return dictionary of supported language codes and names."""
         if self.variant == "multilingual":
             return SUPPORTED_LANGUAGES.copy()
+        elif self.variant == "viterbox":
+            return VITERBOX_SUPPORTED_LANGUAGES.copy()
         else:
             return { "en": "English" }
 
@@ -242,6 +359,7 @@ class ChatterboxTTS:
         audio_prompt_path: Optional[str] = None,
         language_id: Optional[str] = 'en',
         exaggeration: float = 0.5,
+        cfg_scale: float = DEFAULT_CFG_SCALE,
         temperature: float = 0.8,
         max_tokens=1000, # Capped at max_model_len
 
@@ -261,6 +379,7 @@ class ChatterboxTTS:
             temperature=temperature,
             language_id=language_id,
             exaggeration=exaggeration,
+            cfg_scale=cfg_scale,
             max_tokens=max_tokens,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
@@ -275,6 +394,7 @@ class ChatterboxTTS:
         language_id: Optional[str] = 'en',
         temperature: float = 0.8,
         exaggeration: float = 0.5,
+        cfg_scale: float = DEFAULT_CFG_SCALE,
         max_tokens=1000, # Capped at max_model_len
 
         # Number of diffusion steps to use for S3Gen
@@ -303,13 +423,19 @@ class ChatterboxTTS:
 
         cond_emb = self.update_exaggeration(cond_emb, exaggeration)
 
+        cond_emb_with_cfg = cond_emb.clone()
+        cond_emb_with_cfg[0, CFG_SCALE_ENCODING_DIM] = cfg_scale
+
         # Norm and tokenize text
         prompts = ["[START]" + punc_norm(p) + "[STOP]" for p in prompts]
 
-        # For multilingual, prepend the language token
+        # For multilingual/viterbox, prepend the language token
         if self.variant == "multilingual":
             # Use angle brackets to avoid conflicts with other start/stop tokens.
             # This will be parsed and replaced in the tokenizer.
+            prompts = [f"<{language_id.lower()}>{p}" for p in prompts]
+        elif self.variant == "viterbox":
+            # Viterbox uses angle brackets format like multilingual
             prompts = [f"<{language_id.lower()}>{p}" for p in prompts]
 
         with torch.inference_mode():
@@ -319,7 +445,7 @@ class ChatterboxTTS:
                     {
                         "prompt": text,
                         "multi_modal_data": {
-                            "conditionals": [cond_emb],
+                            "conditionals": [cond_emb_with_cfg],
                         },
                     }
                     for text in prompts
@@ -355,13 +481,30 @@ class ChatterboxTTS:
                     speech_tokens = torch.tensor([token - SPEECH_TOKEN_OFFSET for token in output.token_ids], device="cuda")
                     speech_tokens = drop_invalid_tokens(speech_tokens)
                     speech_tokens = speech_tokens[speech_tokens < 6561]
+                    
+                    # Remove last token to avoid click artifacts (like original Viterbox)
+                    if len(speech_tokens) > 1:
+                        speech_tokens = speech_tokens[:-1]
 
                     wav, _ = self.s3gen.inference(
                         speech_tokens=speech_tokens,
                         ref_dict=s3gen_ref,
                         n_timesteps=diffusion_steps,
                     )
-                    results.append(wav.cpu())
+                    
+                    # Apply fade in/out to prevent click artifacts (like original Viterbox)
+                    wav_np = wav.squeeze(0).cpu().numpy()
+                    fade_in_samples = int(0.005 * self.sr)  # 5ms fade-in
+                    if len(wav_np) > fade_in_samples:
+                        import numpy as np
+                        fade_curve = np.linspace(0.0, 1.0, fade_in_samples)
+                        wav_np[:fade_in_samples] = wav_np[:fade_in_samples] * fade_curve
+                    fade_out_samples = int(0.01 * self.sr)  # 10ms fade-out
+                    if len(wav_np) > fade_out_samples:
+                        fade_curve = np.linspace(1.0, 0.0, fade_out_samples)
+                        wav_np[-fade_out_samples:] = wav_np[-fade_out_samples:] * fade_curve
+                    
+                    results.append(torch.from_numpy(wav_np).unsqueeze(0))
             s3gen_gen_time = time.time() - start_time
             print(f"[S3Gen] Wavform Generation time: {s3gen_gen_time:.2f}s")
 
