@@ -13,6 +13,10 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
 from chatterbox_vllm.models.t3.modules.t3_config import T3Config
+from chatterbox_vllm.exceptions import (
+    ChatterboxError, ModelLoadError, InferenceError, 
+    AudioProcessingError, ConfigurationError, VLLMError
+)
 
 from .models.s3tokenizer import S3_SR, drop_invalid_tokens
 from .models.s3gen import S3GEN_SR, S3Gen
@@ -413,12 +417,37 @@ class ChatterboxTTS:
         if isinstance(prompts, str):
             prompts = [prompts]
 
+        if not prompts:
+            raise ConfigurationError("prompts", prompts, "Cannot generate with empty prompts list")
+
+        if cfg_scale < 0 or cfg_scale > 2.0:
+            raise ConfigurationError(
+                "cfg_scale", cfg_scale, 
+                "CFG scale should be between 0 and 2.0",
+                valid_range="0.0 to 2.0 (typical: 0.3-0.7)"
+            )
+
+        if exaggeration < 0 or exaggeration > 1.0:
+            raise ConfigurationError(
+                "exaggeration", exaggeration,
+                "Exaggeration should be between 0 and 1.0",
+                valid_range="0.0 to 1.0"
+            )
+
+        if temperature <= 0 or temperature > 2.0:
+            raise ConfigurationError(
+                "temperature", temperature,
+                "Temperature must be positive and typically below 2.0",
+                valid_range="0.1 to 2.0 (typical: 0.6-1.0)"
+            )
+
         # Validate language_id
         if language_id and language_id.lower() not in self.get_supported_languages():
             supported_langs = ", ".join(self.get_supported_languages().keys())
-            raise ValueError(
-                f"Unsupported language_id '{language_id}'. "
-                f"Supported languages: {supported_langs}"
+            raise ConfigurationError(
+                "language_id", language_id,
+                f"Unsupported language",
+                valid_range=supported_langs
             )
 
         cond_emb = self.update_exaggeration(cond_emb, exaggeration)
@@ -440,27 +469,33 @@ class ChatterboxTTS:
 
         with torch.inference_mode():
             start_time = time.time()
-            batch_results = self.t3.generate(
-                [
-                    {
-                        "prompt": text,
-                        "multi_modal_data": {
-                            "conditionals": [cond_emb_with_cfg],
-                        },
-                    }
-                    for text in prompts
-                ],
-                sampling_params=SamplingParams(
-                    temperature=temperature,
+            try:
+                batch_results = self.t3.generate(
+                    [
+                        {
+                            "prompt": text,
+                            "multi_modal_data": {
+                                "conditionals": [cond_emb_with_cfg],
+                            },
+                        }
+                        for text in prompts
+                    ],
+                    sampling_params=SamplingParams(
+                        temperature=temperature,
 
-                    stop_token_ids=[self.t3_config.stop_speech_token + SPEECH_TOKEN_OFFSET],
-                    max_tokens=min(max_tokens, self.max_model_len),
-                    top_p=top_p,
-                    repetition_penalty=repetition_penalty,
+                        stop_token_ids=[self.t3_config.stop_speech_token + SPEECH_TOKEN_OFFSET],
+                        max_tokens=min(max_tokens, self.max_model_len),
+                        top_p=top_p,
+                        repetition_penalty=repetition_penalty,
 
-                    *args, **kwargs,
+                        *args, **kwargs,
+                    )
                 )
-            )
+            except Exception as e:
+                raise VLLMError(
+                    f"Failed to generate speech tokens: {str(e)}",
+                    suggestion="Check GPU memory, try reducing batch size or max_tokens"
+                ) from e
             t3_gen_time = time.time() - start_time
             print(f"[T3] Speech Token Generation time: {t3_gen_time:.2f}s")
 
@@ -494,11 +529,18 @@ class ChatterboxTTS:
                     if len(speech_tokens) < 10:
                         print(f"[S3] Warning: Very short speech token sequence ({len(speech_tokens)} tokens) for prompt {i}")
 
-                    wav, _ = self.s3gen.inference(
-                        speech_tokens=speech_tokens,
-                        ref_dict=s3gen_ref,
-                        n_timesteps=diffusion_steps,
-                    )
+                    try:
+                        wav, _ = self.s3gen.inference(
+                            speech_tokens=speech_tokens,
+                            ref_dict=s3gen_ref,
+                            n_timesteps=diffusion_steps,
+                        )
+                    except Exception as e:
+                        raise InferenceError(
+                            "S3Gen waveform generation", 
+                            f"Failed to synthesize audio for prompt {i}: {str(e)}",
+                            suggestion="Try shorter text, different voice reference, or reduce diffusion_steps"
+                        ) from e
                     
                     # Apply fade in/out to prevent click artifacts (like original Viterbox)
                     wav_np = wav.squeeze(0).cpu().numpy()
