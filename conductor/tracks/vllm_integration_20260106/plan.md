@@ -4,10 +4,10 @@
 Focus on fixing known issues and ensuring correctness.
 
 - [x] Task: Audit vLLM internal API usage for compatibility with vLLM 0.10+ (commit 3ec486e)
-- [~] Task: Fix CFG implementation to allow per-request tuning (not just env var)
-- [ ] Task: Resolve batched request truncation edge cases
-- [ ] Task: Implement proper error handling with actionable messages
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Stabilization' (Protocol in workflow.md)
+- [x] Task: Fix CFG implementation to allow per-request tuning (not just env var) (commit ca84d54)
+- [x] Task: Resolve batched request truncation edge cases (commit 4ee2e95)
+- [x] Task: Implement proper error handling with actionable messages (commit f873c30)
+- [~] Task: Conductor - User Manual Verification 'Phase 1: Stabilization' (Protocol in workflow.md)
 
 ## Phase 2: Multilingual Quality
 Address quality gaps in multilingual support.
