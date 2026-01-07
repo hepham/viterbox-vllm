@@ -109,6 +109,51 @@ An early version of Multilingual support is available (see [this example](https:
 
 For the list of supported languages, see [here](https://github.com/resemble-ai/chatterbox?tab=readme-ov-file#supported-languages).
 
+# Viterbox (Vietnamese)
+
+Vietnamese TTS is available via the Viterbox model variant:
+
+```python
+from chatterbox_vllm.tts import ChatterboxTTS
+
+model = ChatterboxTTS.from_pretrained_viterbox(
+    max_model_len=1000,
+    max_batch_size=5,
+    compile=False,
+)
+
+audios = model.generate(
+    ["Xin chào! Đây là mô hình TTS tiếng Việt."],
+    language_id="vi",
+)
+```
+
+# API Reference
+
+## ChatterboxTTS
+
+### Loading Methods
+
+| Method | Description |
+|--------|-------------|
+| `from_pretrained()` | Load English model from HuggingFace |
+| `from_pretrained_multilingual()` | Load multilingual model (23 languages) |
+| `from_pretrained_viterbox()` | Load Viterbox Vietnamese model |
+| `from_local(ckpt_dir)` | Load from local checkpoint directory |
+
+### Generation Methods
+
+| Method | Description |
+|--------|-------------|
+| `generate(prompts, ...)` | Generate audio from text prompts |
+| `generate_with_conds(prompts, s3gen_ref, cond_emb, ...)` | Generate with pre-computed conditioning |
+
+### Properties
+
+| Property | Description |
+|----------|-------------|
+| `sr` | Sample rate of generated audio (24000 Hz) |
+
 # Configuration
 
 The following environment variables can be used to configure the TTS engine:
