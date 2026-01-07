@@ -32,18 +32,22 @@ DISCLAIMER: THIS IS A PERSONAL PROJECT and is not affiliated with my employer or
 * ✅ Basic speech cloning with audio and text conditioning.
 * ✅ Outputs match the quality of the original Chatterbox implementation.
 * ✅ Context Free Guidance (CFG) is implemented.
-  * Due to a vLLM limitation, CFG can not be tuned on a per-request basis and can only be configured via the `CHATTERBOX_CFG_SCALE` environment variable.
+  * CFG scale can now be tuned per-request via the `cfg_scale` parameter (default 0.5).
+  * Can also be configured globally via the `CHATTERBOX_CFG_SCALE` environment variable.
 * ✅ Exaggeration control is implemented.
 * ✅ vLLM batching is implemented and produces a significant speedup.
+* ✅ Alignment analyzer for repetition/hallucination detection.
+  * Configurable via environment variables (see Configuration section).
 * ℹ️ Project uses vLLM internal APIs and extremely hacky workarounds to get things done.
   * Refactoring to the idiomatic vLLM way of doing things is WIP, but will require some changes to vLLM.
-  * Until then, this is a Rube Goldberg machine that will likely only work with vLLM 0.9.2.
+  * Until then, this is a Rube Goldberg machine that will likely only work with vLLM 0.10.0.
   * Follow https://github.com/vllm-project/vllm/issues/21989 for updates.
 * ℹ️ Substantial refactoring is needed to further clean up unnecessary workarounds and code paths.
 * ℹ️ Server API is not implemented and will likely be out-of-scope for this project.
+* ℹ️ CUDA graphs can be enabled with `compile=True` for additional performance.
+  * May have compatibility issues with some hardware/driver combinations.
 * ❌ Learned speech positional embeddings are not applied, pending support in vLLM. However, this doesn't seem to be causing a very noticeable degradation in quality.
 * ❌ APIs are not yet stable and may change.
-* ❌ Benchmarks and performance optimizations are not yet implemented.
 
 # Installation
 
@@ -101,11 +105,22 @@ if __name__ == "__main__":
 # Multilingual
 
 An early version of Multilingual support is available (see [this example](https://github.com/randombk/chatterbox-vllm/blob/master/example-tts-multilingual.py)). However there *are* quality degradations compared to the original model, driven by:
-* Alignment Stream Analyzer is not implemented, which can result in errors, repetitions, and extra noise at the end of the audio snippet.
-* The lack of learned speech positional encodings is also much more noticible.
-* Russian text stress is not yet implemented.
+* The lack of learned speech positional encodings is noticeable on longer outputs.
 
 For the list of supported languages, see [here](https://github.com/resemble-ai/chatterbox?tab=readme-ov-file#supported-languages).
+
+# Configuration
+
+The following environment variables can be used to configure the TTS engine:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHATTERBOX_CFG_SCALE` | `0.5` | Default CFG scale (can be overridden per-request) |
+| `CHATTERBOX_ALIGNMENT_ENABLED` | `1` | Enable alignment analyzer (set to `0` to disable) |
+| `CHATTERBOX_MAX_FRAMES_FACTOR` | `5.0` | Max speech frames = text_len × this factor |
+| `CHATTERBOX_MIN_FRAMES_BEFORE_EOS` | `15` | Suppress EOS for this many initial frames |
+| `CHATTERBOX_MIN_SPEECH_FRAMES` | `20` | Minimum speech frames regardless of text length |
+| `CHATTERBOX_REPETITION_THRESHOLD` | `2` | Force EOS after this many consecutive same tokens |
 
 # Benchmarks
 
@@ -117,7 +132,7 @@ Notes:
  * With vLLM, **the T3 model is no longer the bottleneck**
    * Vast majority of time is now spent on the S3Gen model, which is not ported/portable to vLLM. This currently uses the original reference implementation from the Chatterbox repo, so there's potential for integrating some of the other community optimizations here.
    * This also means the vLLM section of the model never fully ramps to its peak throughput in these benchmarks.
- * Benchmarks are done without CUDA graphs, as that is currently causing correctness issues.
+ * Benchmarks are done without CUDA graphs. Enable with `compile=True` for additional performance.
  * There are some issues with my very rudimentary chunking logic, which is causing some occasional artifacts in output quality.
 
 ## Run 1: RTX 3090
