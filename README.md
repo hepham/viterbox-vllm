@@ -122,6 +122,16 @@ The following environment variables can be used to configure the TTS engine:
 | `CHATTERBOX_MIN_SPEECH_FRAMES` | `20` | Minimum speech frames regardless of text length |
 | `CHATTERBOX_REPETITION_THRESHOLD` | `2` | Force EOS after this many consecutive same tokens |
 
+## API Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `diffusion_steps` | `10` | Number of diffusion steps for S3Gen. Lower = faster but lower quality. Range: 2-10 |
+| `cfg_scale` | `0.5` | Classifier-free guidance scale. Higher = more adherence to conditioning. Range: 0.0-2.0 |
+| `exaggeration` | `0.5` | Emotion/style exaggeration. Range: 0.0-1.0 |
+| `temperature` | `0.8` | Sampling temperature. Higher = more variation. Range: 0.1-2.0 |
+| `compile` | `False` | Enable CUDA graphs for faster inference (model loading parameter) |
+
 # Benchmarks
 
 To run a benchmark, tweak and run `benchmark.py`.
