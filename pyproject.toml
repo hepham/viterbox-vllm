@@ -33,6 +33,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["build", "twine"]
+multilingual = [
+    "russian-text-stresser",
+    "dicta-onnx",
+]
 
 [tool.setuptools.dynamic]
 version = { file = ".latest-version.generated.txt" }
