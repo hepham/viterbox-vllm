@@ -32,6 +32,7 @@ from vllm.sequence import IntermediateTensors
 
 from chatterbox_vllm.models.t3.modules.learned_pos_emb import LearnedPositionEmbeddings
 from chatterbox_vllm.models.t3.modules.t3_config import T3Config
+from chatterbox_vllm.models.t3.inference.alignment_stream_analyzer_vllm import AlignmentStreamAnalyzerVllm
 from .modules.cond_enc import T3Cond, T3CondEnc
 
 
@@ -302,6 +303,18 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
         
         self._request_cfg_scales: dict[int, float] = {}
         self._pending_cfg_scale: float = self.default_cfg_scale
+
+        alignment_enabled = os.environ.get("CHATTERBOX_ALIGNMENT_ENABLED", "1") == "1"
+        self.alignment_analyzer = AlignmentStreamAnalyzerVllm(
+            eos_idx=self.t3conf.stop_speech_token,
+            max_frames_factor=float(os.environ.get("CHATTERBOX_MAX_FRAMES_FACTOR", "5.0")),
+            min_frames_before_eos=int(os.environ.get("CHATTERBOX_MIN_FRAMES_BEFORE_EOS", "15")),
+            min_speech_frames=int(os.environ.get("CHATTERBOX_MIN_SPEECH_FRAMES", "20")),
+            repetition_threshold=int(os.environ.get("CHATTERBOX_REPETITION_THRESHOLD", "2")),
+            enabled=alignment_enabled,
+        )
+        if alignment_enabled:
+            print("Alignment analyzer enabled")
 
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
@@ -633,6 +646,10 @@ class T3VllmModel(nn.Module, VllmModelForTextGeneration, SupportsMultiModal):
         logits = cond_logits + cfg_scale * (cond_logits - uncond_logits)
 
         # print("t3/compute_logits/logit with the highest probability (cond, uncond, post-cfg):", cond_logits.argmax(), uncond_logits.argmax(), logits.argmax())
+
+        # Apply alignment analyzer to detect and mitigate repetitions/hallucinations
+        # This operates on speech-space logits before SPEECH_TOKEN_OFFSET is applied
+        logits = self.alignment_analyzer.step(logits, sampling_metadata)
 
         # HACK: Offset the logits so the resulting speech token is +SPEECH_TOKEN_OFFSET from the normal speech tokens.
         #       We'll do this by adding SPEECH_TOKEN_OFFSET fake dimensions to the left of the logits.
